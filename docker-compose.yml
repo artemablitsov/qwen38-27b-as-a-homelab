@@ -1,0 +1,116 @@
+services:
+  download-weights:
+    image: alpine
+    container_name: download-weights 
+    volumes:
+      - ./models:/models:rw
+    command: 
+      - /bin/sh
+      - -c
+      - |
+        [ -e "/models/Qwen3.8-27B-Uncensored-Q4_K_M.gguf" ] || (mkdir -p /models && wget https://huggingface.co/JonathanColetti/Qwen3.8-27B-Uncensored-GGUF/blob/main/Qwen3.8-27B-Uncensored-Q4_K_M.gguf -P /models)
+        [ -e "/models/Qwen3.8-27B-Uncensored-draft-Q8_0.gguf" ] || (mkdir -p /models && wget https://huggingface.co/JonathanColetti/Qwen3.8-27B-Uncensored-GGUF/blob/main/Qwen3.8-27B-Uncensored-draft-Q8_0.gguf -P /models)
+
+  llm-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.LLM
+    container_name: llm-server
+    ports:
+      - "8192:8080"
+    volumes:
+      - ./models:/models
+    command: [
+      "-m","/models/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+      "--fit", "1",
+      "--spec-type", "draft-mtp",
+      "--model-draft", "/models/Qwen3.8-27B-Uncensored-draft-Q8_0.gguf",
+      "--host", "0.0.0.0", 
+      "--port", "8080",
+      "-ngl","-1",
+      "--reasoning-effort", "low",
+      "--cache-ram","16384",
+      "-c","131072",
+      "-np","4",
+      "-b", "512",
+      "-ub", "256",
+      "--main-gpu","0",
+      "--tensor-split","60,40",
+      "-ctk", "q4_0",
+      "-ctv", "q4_0",
+      "--flash-attn","1",    
+      "--temp","0.0",
+      "--top-p","0.9",
+      "--top-k","20",
+      "--min-p","0.0",
+      "-n","-1",
+      "--repeat-penalty","1.05",
+      "-t","8", "-tb","16",
+      "--jinja",
+      "--metrics"
+      ]
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    depends_on:
+      download-weights:
+        condition: service_completed_successfully
+
+  opencode-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.OpenCode
+    container_name: opencode-server
+    environment:
+      - IP_CHANGE_INTERVAL=300
+      - HTTPS_PROXY="127.0.0.1:9080"
+      - HTTP_PROXY="127.0.0.1:9080"
+      - NO_PROXY="localhost,127.0.0.1,llm-server"
+      - UMASK=000
+      - FILE_MODE=0777  # Некоторые образы вместо UMASK используют эти переменные
+      - DIR_MODE=0777
+    ports:
+      - "80:4096"
+    volumes:
+      - ./opencode.json:/root/.config/opencode/opencode.json:ro
+      - opencode_workspace:/root/workspace 
+      - ./AGENTS.md:/root/workspace/AGENTS.md:ro
+    restart: unless-stopped
+    depends_on:
+      llm-server:
+        condition: service_healthy
+
+  # Сервер Samba, который будет раздавать эту папку в сеть
+  opencode-samba:
+    build:
+      context: .
+      dockerfile: Dockerfile.Samba
+    container_name: opencode-samba
+    environment:
+      - TZ=Europe/Moscow
+      # -p включает глобальный гостевой доступ (guest account)
+      - NMBD=yes
+      - OPTIONS=-p -r
+      # Формат шары: "имя;путь;публичная;только_чтение;гость"
+      # Ставим yes на "публичная" и "гость"
+      - SHARE=public;/share;yes;no;yes
+      - PERMISSIONS=1
+    volumes:
+      - opencode_workspace:/share:z # Подключаем тот же том, что и у приложения
+    ports:
+      - "139:139"
+      - "445:445"
+    restart: unless-stopped
+    depends_on:
+      opencode-server:
+        condition: service_healthy
+
+
+
+volumes:
+  opencode_workspace:        
