@@ -68,12 +68,9 @@ services:
     container_name: opencode-server
     environment:
       - IP_CHANGE_INTERVAL=300
-      - HTTPS_PROXY="127.0.0.1:9080"
-      - HTTP_PROXY="127.0.0.1:9080"
-      - NO_PROXY="localhost,127.0.0.1,llm-server"
-      - UMASK=000
-      - FILE_MODE=0777  # Некоторые образы вместо UMASK используют эти переменные
-      - DIR_MODE=0777
+      - HTTPS_PROXY=127.0.0.1:9080
+      - HTTP_PROXY=127.0.0.1:9080
+      - NO_PROXY=localhost,127.0.0.1,llm-server
     ports:
       - "80:4096"
     volumes:
@@ -110,7 +107,7 @@ services:
       opencode-server:
         condition: service_healthy
 
-
-
 volumes:
-  opencode_workspace:        
+  opencode_workspace:       
+    name: opencode-workspace
+
